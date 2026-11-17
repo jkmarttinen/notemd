@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.tmp
+# paikallinen vanha käynnistysohjain
+instanote.py
+# muistiinpanot tallentuvat repon ulkopuolelle (~/Documents/InstaNote), mutta varmuuden vuoksi:
+*.md.bak
+muistiinpanot.md

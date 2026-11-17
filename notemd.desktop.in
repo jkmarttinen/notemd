@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=notemd
+Comment=Pikamuistiinpanot
+Exec=@DIR@/notemd.py
+Icon=@DIR@/notemd.svg
+Terminal=false
+Categories=Utility;TextEditor;
+StartupWMClass=notemd
