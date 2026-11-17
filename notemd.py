@@ -377,7 +377,7 @@ class AllNotesWindow(Gtk.Window):
         if self.same(self.confirming, n):
             lbl = Gtk.Label(label="delete?")
             lbl.get_style_context().add_class("hint")
-            extras = [self.small_button("ei", self.cancel_delete),
+            extras = [self.small_button("no", self.cancel_delete),
                       self.small_button("yes", lambda: self.do_delete(n), "danger"), lbl]
         else:
             extras = [self.small_button("delete", lambda: self.ask_delete(n)),
