@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""notemd – pikamuistiinpanot yhdellä pikanäppäimellä.
+"""notemd – quick notes with a single hotkey.
 
-Enter = rivinvaihto, kaksi Enteriä nopeasti tai Ctrl+Enter = tallenna, Esc = sulje.
-Muistiinpanot tallentuvat tiedostoon ~/Documents/InstaNote/muistiinpanot.md
+Enter = newline, double Enter (quickly) or Ctrl+Enter = save, Esc = close.
+Notes are stored in ~/Documents/notemd/notes.md
 
-Tiedoston rakenne:
-    # Yleinen          <- muistiinpanot ilman kategoriaa
-    ## 2026-11-17 17:41:57
-    teksti
-    # Työ              <- kategoria (säilyy tiedostossa vaikka olisi tyhjä)
-    ## 2026-11-17 18:02:10
-    teksti
+File structure:
+    # General          <- notes without a category
+    ## Tue 17.11.2026 17:41:57
+    text
+    # Work             <- category (kept in the file even when empty)
+    ## Tue 17.11.2026 18:02:10
+    text
 """
 import os
 import re
@@ -23,20 +23,23 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # noqa: E402
 
-# Wayland-sovellus-id: KDE yhdistää ikkunan notemd.desktop-tiedostoon (kuvake)
+# Wayland app id: lets KDE match the window to notemd.desktop (icon)
 GLib.set_prgname("notemd")
 GLib.set_application_name("notemd")
 ICON_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notemd.svg")
 
-NOTES_DIR = os.path.expanduser("~/Documents/InstaNote")
-NOTES_FILE = os.path.join(NOTES_DIR, "muistiinpanot.md")
-GENERAL = "Yleinen"
+NOTES_DIR = os.path.expanduser("~/Documents/notemd")
+NOTES_FILE = os.path.join(NOTES_DIR, "notes.md")
+# Earlier (Finnish) versions stored notes here; moved to the new location on first start
+OLD_NOTES_FILE = os.path.expanduser("~/Documents/InstaNote/muistiinpanot.md")
+GENERAL = "General"
+LEGACY_GENERAL = "Yleinen"  # the group name used by the Finnish version
 CAT_HEADING = re.compile(r"^# (.+?)\s*$")
 PIN = "📌"
-WEEKDAYS = ["ma", "ti", "ke", "to", "pe", "la", "su"]
-# Otsikko: "## ti 17.11.2026 17:50:59" (vanha ISO-muoto 2026-11-17 luetaan myös)
+WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+# Heading: "## Tue 17.11.2026 17:50:59" (the ISO form 2026-11-17 and Finnish weekdays are read too)
 NOTE_HEADING = re.compile(
-    r"^## (?:(?:ma|ti|ke|to|pe|la|su) )?(?:(\d{4})-(\d{2})-(\d{2})|(\d{1,2})\.(\d{1,2})\.(\d{4})) (\d{2}:\d{2}:\d{2})(\s+" + PIN + r")?\s*$")
+    r"^## (?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|ma|ti|ke|to|pe|la|su) )?(?:(\d{4})-(\d{2})-(\d{2})|(\d{1,2})\.(\d{1,2})\.(\d{4})) (\d{2}:\d{2}:\d{2})(\s+" + PIN + r")?\s*$")
 NEEDS_ESCAPE = re.compile(r"^#{1,2}\s")
 
 CSS = b"""
@@ -82,9 +85,9 @@ scrollbar trough, scrollbar { background: transparent; border: none; }
 """
 
 
-# ---------------------------------------------------------------- tallennus
+# ---------------------------------------------------------------- storage
 def parse_heading(m):
-    """Otsikon osumasta (ISO-aikaleima järjestämiseen, kiinnitetty)."""
+    """From a heading match: (ISO timestamp for sorting, pinned)."""
     if m.group(1):
         y, mo, d = m.group(1), m.group(2), m.group(3)
     else:
@@ -103,12 +106,20 @@ def unescape(line):
     return line[1:] if line.startswith("\\") and NEEDS_ESCAPE.match(line[1:]) else line
 
 
-def load_data():
-    """Palauttaa (kategoriat, muistiinpanot).
+def migrate_old_file():
+    """Moves the notes file of an earlier version to the new location (once)."""
+    if not os.path.exists(NOTES_FILE) and os.path.exists(OLD_NOTES_FILE):
+        os.makedirs(NOTES_DIR, exist_ok=True)
+        os.replace(OLD_NOTES_FILE, NOTES_FILE)
 
-    kategoriat: lista nimiä luontijärjestyksessä (ilman 'Yleinen').
-    muistiinpanot: lista dict-olioita {stamp, cat (None = yleinen), text, order}.
+
+def load_data():
+    """Returns (categories, notes).
+
+    categories: list of names in creation order (without 'General').
+    notes: list of dicts {stamp, cat (None = general), text, order}.
     """
+    migrate_old_file()
     try:
         with open(NOTES_FILE, encoding="utf-8") as f:
             lines = f.read().splitlines()
@@ -137,7 +148,7 @@ def load_data():
             flush()
             cur = None
             name = m.group(1)
-            cur_cat = None if name == GENERAL else name
+            cur_cat = None if name in (GENERAL, LEGACY_GENERAL) else name
             if cur_cat and cur_cat not in cats:
                 cats.append(cur_cat)
             continue
@@ -148,7 +159,7 @@ def load_data():
 
 
 def write_data(cats, notes):
-    """Kirjoittaa koko tiedoston kategorioittain jäsenneltynä (atomisesti)."""
+    """Writes the whole file grouped by category (atomically)."""
     os.makedirs(NOTES_DIR, exist_ok=True)
     out = []
     for cat in [None] + cats:
@@ -176,7 +187,7 @@ def add_note(text, cat):
 def add_category(name):
     """Palauttaa siistityn nimen tai None jos nimi ei kelpaa."""
     name = re.sub(r"\s+", " ", name).strip().lstrip("#").strip()[:40]
-    if not name or name.lower() == GENERAL.lower():
+    if not name or name.lower() in (GENERAL.lower(), LEGACY_GENERAL.lower()):
         return None
     cats, notes = load_data()
     existing = next((c for c in cats if c.lower() == name.lower()), None)
@@ -211,7 +222,7 @@ def toggle_pin(target):
 
 
 def delete_category(name, action, target=None):
-    """action 'move': siirrä muistiinpanot kategoriaan target (None = Yleinen); 'delete': poista ne."""
+    """action 'move': move the notes to category target (None = General); 'delete': delete them."""
     cats, notes = load_data()
     if name in cats:
         cats.remove(name)
@@ -225,7 +236,7 @@ def delete_category(name, action, target=None):
 
 
 def sort_key(n):
-    """Kiinnitetyt ensin, sitten uusin ensin (käytä reverse=True)."""
+    """Pinned first, then newest first (use with reverse=True)."""
     return (n["pinned"], n["stamp"], n["order"])
 
 
@@ -259,8 +270,8 @@ def make_card(note, full=False):
     b.set_xalign(0)
     b.set_line_wrap(True)
     b.set_max_width_chars(40 if not full else 80)
-    b.set_selectable(False)  # raahaus (drag & drop) vaatii ettei teksti valikoidu
-    b.set_can_focus(False)  # ei maalaa tekstiä ikkunan auetessa
+    b.set_selectable(False)  # drag & drop requires that the text is not selectable
+    b.set_can_focus(False)  # keeps the text from being highlighted when the window opens
     card.pack_start(s, False, False, 0)
     card.pack_start(b, False, False, 0)
     return card
@@ -294,7 +305,7 @@ def pin_pixbuf(color, filled):
 
 
 class PinButton(Gtk.Button):
-    """Nuppineula-ikoni: harmaa ääriviiva = irrallinen, oranssi täyttö = kiinnitetty."""
+    """Push-pin icon: grey outline = unpinned, orange fill = pinned."""
 
     def __init__(self, pinned, callback):
         super().__init__()
@@ -302,7 +313,7 @@ class PinButton(Gtk.Button):
         self.get_style_context().add_class("pinbtn")
         self.set_can_focus(False)
         self.set_relief(Gtk.ReliefStyle.NONE)
-        self.set_tooltip_text("Irrota" if pinned else "Kiinnitä ylimmäksi")
+        self.set_tooltip_text("Unpin" if pinned else "Pin to top")
         self.image = Gtk.Image()
         self.add(self.image)
         self.update_icon()
@@ -316,13 +327,13 @@ class PinButton(Gtk.Button):
 
 
 def add_pin_header(card, note, callback, extras=()):
-    """Siirtää kortin aikaleimarivin otsikkoriviksi, jonka oikeassa reunassa on nuppineula."""
+    """Turns the card's timestamp row into a header row with the pin icon on the right."""
     stamp = card.get_children()[0]
     card.remove(stamp)
     header = Gtk.Box(spacing=6)
     header.pack_start(stamp, True, True, 0)
     header.pack_end(PinButton(note["pinned"], callback), False, False, 0)
-    for w in extras:  # pack_end: ensimmäinen extra on lähinnä neulaa
+    for w in extras:  # pack_end: the first extra is the one closest to the pin
         header.pack_end(w, False, False, 0)
     card.pack_start(header, False, False, 0)
     card.reorder_child(header, 0)
@@ -333,32 +344,32 @@ def clear(container):
         container.remove(child)
 
 
-DOUBLE_ENTER_SECS = 0.4  # kaksi Enteriä näin nopeasti = tallenna
-ALL = object()  # kategoriasuodatin: kaikki
+DOUBLE_ENTER_SECS = 0.4  # two Enters this quickly = save
+ALL = object()  # category filter: all
 DND_TAG = "notemd-note"
 DND_TARGETS = [Gtk.TargetEntry.new("text/plain", Gtk.TargetFlags.SAME_APP, 0)]
 
 
 class AllNotesWindow(Gtk.Window):
-    """Kaikki muistiinpanot kategorioittain ryhmiteltynä, muokkaus ja poisto."""
+    """All notes grouped by category, with editing and deleting."""
 
     def __init__(self, parent):
-        super().__init__(title="notemd – kaikki muistiinpanot")
+        super().__init__(title="notemd – all notes")
         self.main = parent
         self.set_default_size(600, 660)
         self.set_transient_for(parent)
         self.get_style_context().add_class("root")
         self.connect("key-press-event", self.on_key)
-        self.editing = None          # muokattava muistiinpano
-        self.confirming = None       # poistovahvistusta odottava muistiinpano
-        self.cat_confirm = None      # poistettavaksi valittu kategoria
-        self.drag_note = None        # raahattava muistiinpano
+        self.editing = None          # note being edited
+        self.confirming = None       # note waiting for delete confirmation
+        self.cat_confirm = None      # category selected for deletion
+        self.drag_note = None        # note being dragged
         self.move_combo = None
         self.editor = None
         self.combo = None
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.search = Gtk.SearchEntry()
-        self.search.set_placeholder_text("haku (teksti tai kategoria)_")
+        self.search.set_placeholder_text("search (text or category)_")
         self.search.get_style_context().add_class("newcat")
         self.search.set_margin_start(14)
         self.search.set_margin_end(14)
@@ -417,9 +428,9 @@ class AllNotesWindow(Gtk.Window):
 
     # -- toiminnot
     def build_filter(self, cats, notes):
-        """Kategorianapit ikkunan yläreunaan: yksi napsautus näyttää vain sen kategorian."""
+        """Category buttons at the top of the window: one click shows only that category."""
         clear(self.filter_flow)
-        entries = [(ALL, f"kaikki {len(notes)}")]
+        entries = [(ALL, f"all {len(notes)}")]
         entries.append((None, f"{GENERAL} {sum(1 for n in notes if n['cat'] is None)}"))
         for c in cats:
             entries.append((c, f"{c} {sum(1 for n in notes if n['cat'] == c)}"))
@@ -430,7 +441,7 @@ class AllNotesWindow(Gtk.Window):
             b.set_can_focus(False)
             b.set_active(key is self.filter_cat or (key is not ALL and key == self.filter_cat))
             b.connect("toggled", self.on_filter_toggled, key)
-            if key is not ALL:  # nappiin voi pudottaa raahatun muistiinpanon
+            if key is not ALL:  # a dragged note can be dropped on the button
                 b.drag_dest_set(Gtk.DestDefaults.ALL, DND_TARGETS, Gdk.DragAction.MOVE)
                 b.connect("drag-data-received", self.on_drag_received, key)
             self.filter_flow.add(b)
@@ -440,7 +451,7 @@ class AllNotesWindow(Gtk.Window):
     def on_filter_toggled(self, button, key):
         if self._syncing:
             return
-        # nappi pois päältä -> takaisin "kaikki"
+        # button toggled off -> back to "all"
         self.filter_cat = key if button.get_active() else ALL
         self.refresh()
 
@@ -465,9 +476,9 @@ class AllNotesWindow(Gtk.Window):
         panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         panel.get_style_context().add_class("note")
         if count == 0:
-            q = f"Poistetaanko kategoria \"{cat}\"?"
+            q = f"Delete category \"{cat}\"?"
         else:
-            q = f"Kategoriassa \"{cat}\" on {count} muistiinpanoa. Mitä niille tehdään?"
+            q = f"Category \"{cat}\" has {count} note{'s' if count != 1 else ''}. What should happen to them?"
         lbl = Gtk.Label(label=q)
         lbl.get_style_context().add_class("body")
         lbl.set_xalign(0)
@@ -482,13 +493,13 @@ class AllNotesWindow(Gtk.Window):
             for name in names:
                 self.move_combo.append_text(name)
             self.move_combo.set_active(0)
-            row.pack_start(self.small_button("siirrä →", lambda: self.do_cat_delete(cat, "move")), False, False, 0)
+            row.pack_start(self.small_button("move →", lambda: self.do_cat_delete(cat, "move")), False, False, 0)
             row.pack_start(self.move_combo, False, False, 0)
-            row.pack_end(self.small_button("peruuta", self.cancel_cat_delete), False, False, 0)
-            row.pack_end(self.small_button("poista myös muistiinpanot", lambda: self.do_cat_delete(cat, "delete"), "danger"), False, False, 0)
+            row.pack_end(self.small_button("cancel", self.cancel_cat_delete), False, False, 0)
+            row.pack_end(self.small_button("delete notes too", lambda: self.do_cat_delete(cat, "delete"), "danger"), False, False, 0)
         else:
-            row.pack_start(self.small_button("poista", lambda: self.do_cat_delete(cat, "delete"), "danger"), False, False, 0)
-            row.pack_start(self.small_button("peruuta", self.cancel_cat_delete), False, False, 0)
+            row.pack_start(self.small_button("delete", lambda: self.do_cat_delete(cat, "delete"), "danger"), False, False, 0)
+            row.pack_start(self.small_button("cancel", self.cancel_cat_delete), False, False, 0)
         panel.pack_start(row, False, False, 0)
         return panel
 
@@ -542,13 +553,13 @@ class AllNotesWindow(Gtk.Window):
             return self.build_editor(n, cats)
         card = make_card(n, full=True)
         if self.same(self.confirming, n):
-            lbl = Gtk.Label(label="poista?")
+            lbl = Gtk.Label(label="delete?")
             lbl.get_style_context().add_class("hint")
             extras = [self.small_button("ei", self.cancel_delete),
-                      self.small_button("kyllä", lambda: self.do_delete(n), "danger"), lbl]
+                      self.small_button("yes", lambda: self.do_delete(n), "danger"), lbl]
         else:
-            extras = [self.small_button("poista", lambda: self.ask_delete(n)),
-                      self.small_button("muokkaa", lambda: self.start_edit(n))]
+            extras = [self.small_button("delete", lambda: self.ask_delete(n)),
+                      self.small_button("edit", lambda: self.start_edit(n))]
         add_pin_header(card, n, lambda: self.pin(n), extras)
         return self.make_draggable(card, n)
 
@@ -583,7 +594,7 @@ class AllNotesWindow(Gtk.Window):
         Gtk.drag_finish(context, note is not None, False, time)
         if note is None or note["cat"] == cat:
             return
-        # päivitys idlessä: refresh tuhoaa raahattavan widgetin kesken tapahtuman
+        # update in idle: refresh destroys the dragged widget in the middle of the event
         def move():
             update_note(note, note["text"], cat)
             self.main.refresh()
@@ -593,7 +604,7 @@ class AllNotesWindow(Gtk.Window):
     def build_editor(self, n, cats):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         card.get_style_context().add_class("note")
-        s = Gtk.Label(label=f"[{fmt_stamp(n['stamp'])}] muokataan")
+        s = Gtk.Label(label=f"[{fmt_stamp(n['stamp'])}] editing")
         s.get_style_context().add_class("stamp")
         s.set_xalign(0)
         card.pack_start(s, False, False, 0)
@@ -616,8 +627,8 @@ class AllNotesWindow(Gtk.Window):
             self.combo.append_text(name)
         self.combo.set_active(names.index(n["cat"]) if n["cat"] in names else 0)
         row.pack_start(self.combo, False, False, 0)
-        row.pack_start(self.small_button("tallenna", self.save_edit, "primary"), False, False, 0)
-        row.pack_start(self.small_button("peruuta", self.cancel_edit), False, False, 0)
+        row.pack_start(self.small_button("save", self.save_edit, "primary"), False, False, 0)
+        row.pack_start(self.small_button("cancel", self.cancel_edit), False, False, 0)
         card.pack_start(row, False, False, 0)
         GLib.idle_add(self.editor.grab_focus)
         return card
@@ -637,7 +648,7 @@ class AllNotesWindow(Gtk.Window):
             self.filter_cat = ALL
         self.build_filter(cats, notes)
         if not notes:
-            lbl = Gtk.Label(label="Ei osumia." if query else "Ei vielä muistiinpanoja.")
+            lbl = Gtk.Label(label="No matches." if query else "No notes yet.")
             lbl.get_style_context().add_class("hint")
             self.box.pack_start(lbl, False, False, 0)
         for cat in [None] + cats:
@@ -663,7 +674,7 @@ class AllNotesWindow(Gtk.Window):
             head.set_margin_top(4)
             head.pack_start(h, True, True, 0)
             if cat is not None and self.cat_confirm != cat:
-                head.pack_end(self.small_button("poista kategoria", lambda c=cat: self.ask_cat_delete(c)), False, False, 0)
+                head.pack_end(self.small_button("delete category", lambda c=cat: self.ask_cat_delete(c)), False, False, 0)
             grp.pack_start(head, False, False, 0)
             if cat is not None and self.cat_confirm == cat:
                 total = sum(1 for n in all_notes if n["cat"] == cat)
@@ -678,14 +689,14 @@ class AllNotesWindow(Gtk.Window):
 class NoteMD(Gtk.Window):
     def __init__(self):
         super().__init__(title="notemd")
-        self.set_default_size(860, -1)  # korkeus sisällön mukaan
+        self.set_default_size(860, -1)  # height follows the content
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_keep_above(True)
         self.get_style_context().add_class("root")
         self.connect("destroy", Gtk.main_quit)
         self.connect("key-press-event", self.on_window_key)
 
-        self.selected = None      # valittu kategoria (None = yleinen)
+        self.selected = None      # selected category (None = general)
         self.cat_buttons = {}
         self.warned = False
         self.last_enter = 0.0
@@ -702,7 +713,7 @@ class NoteMD(Gtk.Window):
         box.set_border_width(16)
         self.add(box)
 
-        # Vasen: kirjoitusikkuna + kategoriat
+        # Left: writing area + categories
         left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.view = Gtk.TextView()
         self.view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
@@ -723,7 +734,7 @@ class NoteMD(Gtk.Window):
         cat_row.pack_start(self.flow, True, True, 0)
 
         self.new_entry = Gtk.Entry()
-        self.new_entry.set_placeholder_text("uusi kategoria_")
+        self.new_entry.set_placeholder_text("new category_")
         self.new_entry.set_width_chars(16)
         self.new_entry.get_style_context().add_class("newcat")
         self.new_entry.set_no_show_all(True)
@@ -731,26 +742,26 @@ class NoteMD(Gtk.Window):
         self.new_entry.connect("focus-out-event", lambda *a: self.hide_new_entry())
         cat_row.pack_start(self.new_entry, False, False, 0)
 
-        self.add_btn = self.side_button("[+] kategoria", self.show_new_entry)
+        self.add_btn = self.side_button("[+] category", self.show_new_entry)
         cat_row.pack_start(self.add_btn, False, False, 0)
         left.pack_start(cat_row, False, False, 0)
 
-        self.hint_text = "Enter: rivinvaihto · Enter Enter / Ctrl+Enter: tallenna · Esc: sulje · Ctrl+1…9: kategoria"
+        self.hint_text = "Enter: newline · Enter Enter / Ctrl+Enter: save · Esc: close · Ctrl+1…9: category"
         hint = self.hint = Gtk.Label(label=self.hint_text)
         hint.get_style_context().add_class("hint")
         hint.set_xalign(0)
         left.pack_start(hint, False, False, 0)
         box.pack_start(left, True, True, 0)
 
-        # Oikea: nappi + viimeisimmät 5
+        # Right: button + the 5 latest
         right_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        all_btn = self.side_button("> kaikki muistiinpanot", self.show_all_notes)
+        all_btn = self.side_button("> all notes", self.show_all_notes)
         all_btn.get_style_context().add_class("primary")
         right_col.pack_start(all_btn, False, False, 0)
         self.list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         right = Gtk.ScrolledWindow()
         right.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        right.set_propagate_natural_height(True)  # ikkuna kasvaa listan mukaan -> ei vierityspalkkia
+        right.set_propagate_natural_height(True)  # window grows with the list -> no scrollbar
         right.set_max_content_height(self.max_height())
         right.add(self.list_box)
         right_col.pack_start(right, True, True, 0)
@@ -770,7 +781,7 @@ class NoteMD(Gtk.Window):
             return 700
 
     def fit_height(self):
-        """Kasvata ikkuna tarvittaessa niin, että lista mahtuu ilman vierityspalkkia."""
+        """Grow the window if needed so the list fits without a scrollbar."""
         width, height = self.get_size()
         _, natural = self.get_preferred_height()
         target = min(natural, self.max_height() + 120)
@@ -781,13 +792,13 @@ class NoteMD(Gtk.Window):
     def side_button(self, label, callback):
         btn = Gtk.Button(label=label)
         btn.get_style_context().add_class("side")
-        btn.set_can_focus(False)  # fokus pysyy kirjoituskentässä
+        btn.set_can_focus(False)  # focus stays in the text area
         btn.connect("clicked", lambda *_: callback())
         return btn
 
     def refresh(self):
         cats, notes = load_data()
-        # kategorianapit
+        # category buttons
         clear(self.flow)
         self.cat_buttons = {}
         if self.selected and self.selected not in cats:
@@ -802,7 +813,7 @@ class NoteMD(Gtk.Window):
             self.flow.add(b)
         self.flow.show_all()
         self.cats = cats
-        # viimeisimmät muistiinpanot
+        # latest notes
         clear(self.list_box)
         for n in latest(notes):
             card = make_card(n)
@@ -829,7 +840,7 @@ class NoteMD(Gtk.Window):
             return
         self.select(cat if button.get_active() else None)
 
-    # -- uusi kategoria
+    # -- new category
     def show_new_entry(self):
         self.add_btn.hide()
         self.new_entry.set_text("")
@@ -854,7 +865,7 @@ class NoteMD(Gtk.Window):
             return True
         return False
 
-    # -- kaikki muistiinpanot
+    # -- all notes
     def show_all_notes(self):
         if self.all_window:
             self.all_window.present()
@@ -862,20 +873,20 @@ class NoteMD(Gtk.Window):
         self.all_window = AllNotesWindow(self)
         self.all_window.connect("destroy", lambda *_: setattr(self, "all_window", None))
 
-    # -- näppäimet
+    # -- keys
     def on_key(self, widget, event):
         if event.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
             now = GLib.get_monotonic_time() / 1e6
             double = now - self.last_enter < DOUBLE_ENTER_SECS
             self.last_enter = now
             if not (event.state & Gdk.ModifierType.CONTROL_MASK or double):
-                return False  # tavallinen rivinvaihto
+                return False  # ordinary newline
             self.last_enter = 0.0
             text = self.draft()
             if text:
                 add_note(text, self.selected)
                 self.refresh()
-            self.view.get_buffer().set_text("")  # poistaa myös ensimmäisen Enterin rivinvaihdon
+            self.view.get_buffer().set_text("")  # also removes the newline from the first Enter
             return True
         if event.state & Gdk.ModifierType.CONTROL_MASK and Gdk.KEY_1 <= event.keyval <= Gdk.KEY_9:
             i = event.keyval - Gdk.KEY_1
@@ -892,11 +903,11 @@ class NoteMD(Gtk.Window):
     def on_window_key(self, widget, event):
         if event.keyval == Gdk.KEY_Escape:
             if self.new_entry.has_focus():
-                return False  # kategoriakenttä käsittelee Escin itse
-            # tallentamaton teksti: ensimmäinen Esc varoittaa, toinen sulkee
+                return False  # the category entry handles Esc itself
+            # unsaved text: the first Esc warns, the second closes
             if self.draft() and not self.warned:
                 self.warned = True
-                self.hint.set_markup("<span foreground='#d2691e'>Tallentamaton teksti! Ctrl+Enter tallentaa, Esc uudestaan hylkää ja sulkee</span>")
+                self.hint.set_markup("<span foreground='#d2691e'>Unsaved text! Ctrl+Enter saves, Esc again discards and closes</span>")
                 return True
             self.close()
             return True

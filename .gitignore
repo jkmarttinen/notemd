@@ -1,8 +1,9 @@
 __pycache__/
 *.pyc
 *.tmp
-# paikallinen vanha käynnistysohjain
+# local launcher shim from an earlier version
 instanote.py
-# muistiinpanot tallentuvat repon ulkopuolelle (~/Documents/InstaNote), mutta varmuuden vuoksi:
-*.md.bak
+# notes are stored outside the repo (~/Documents/notemd), but just in case:
+notes.md
 muistiinpanot.md
+*.md.bak

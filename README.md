@@ -1,40 +1,49 @@
 # notemd
 
-Pikamuistiinpanosovellus Linuxille (Python + GTK3). Avaa pienen tumman ikkunan pikanäppäimellä, kirjoitat muistiinpanon ja se tallentuu aikaleimalla Markdown-tiedostoon, jäsenneltynä kategorioittain.
+A quick-note app for Linux (Python + GTK3). Open a small dark window with a hotkey, type a note, and it is saved with a timestamp to a Markdown file, organised by category.
 
-## Ominaisuudet
-- Pieni konsolityylinen ikkuna, viisi viimeisintä muistiinpanoa näkyvillä
-- Kategoriat (luonti nappina, pikavalinta Ctrl+1…9)
-- Kiinnitys (📌), muokkaus, poisto, haku ja raahaus kategorioiden välillä "kaikki muistiinpanot" -ikkunassa
-- Suomalainen päivämäärä viikonpäivällä: `ti 17.11.2026 17:50:59`
+## Features
+- Small console-style window showing your 5 latest notes
+- Categories (create with a button, quick-select with Ctrl+1…9)
+- Pinning (📌), editing, deleting, search, category filter buttons, and drag & drop between categories in the "all notes" window
+- Timestamps with weekday: `Tue 17.11.2026 17:50:59`
 
-## Näppäimet
-| Näppäin | Toiminto |
+## Keys
+| Key | Action |
 |---|---|
-| Enter | rivinvaihto |
-| Enter Enter (nopeasti) / Ctrl+Enter | tallenna |
-| Esc | sulje (varoittaa tallentamattomasta tekstistä) |
+| Enter | newline |
+| Enter Enter (quickly) / Ctrl+Enter | save |
+| Esc | close (warns first if there is unsaved text) |
 
-## Vaatimukset
-Python 3, `python3-gi`, GTK 3 (`gir1.2-gtk-3.0`), GdkPixbuf SVG-tuki (`librsvg2-common`).
+## Requirements
+Python 3, `python3-gi`, GTK 3 (`gir1.2-gtk-3.0`), and SVG support for GdkPixbuf (`librsvg2-common`).
 
-## Asennus
+On Debian/Ubuntu:
 ```sh
+sudo apt install python3-gi gir1.2-gtk-3.0 librsvg2-common
+```
+
+## Install
+```sh
+git clone https://github.com/jkmarttinen/notemd.git
+cd notemd
 ./install.sh
 ```
-Lisää sovellusvalikkoon launcherin ja kuvakkeen. Pikanäppäin asetetaan työpöydän omista asetuksista (KDE: Järjestelmäasetukset → Pikanäppäimet → Lisää komento): `/polku/notemd.py`.
+This adds a launcher and icon to your application menu. Set the hotkey in your desktop environment's settings (KDE: System Settings → Shortcuts → Add Command) with the command `/path/to/notemd.py`. Global hotkeys cannot be registered by the app itself on Wayland.
 
-## Tallennus
-Muistiinpanot tallennetaan tiedostoon `~/Documents/InstaNote/muistiinpanot.md`:
+## Storage
+Notes are stored in `~/Documents/notemd/notes.md`:
 
 ```
-# Yleinen
+# General
 
-## ti 17.11.2026 17:50:59
+## Tue 17.11.2026 17:50:59
 
-teksti
+note text
 
-# Työ
+# Work
 ...
 ```
-Tiedosto on tavallista Markdownia, ja kiinnitetyn muistiinpanon otsikon perässä on 📌.
+The file is plain Markdown. A pinned note has 📌 after its heading, and empty categories are kept as headings.
+
+If you used an earlier (Finnish) version, `~/Documents/InstaNote/muistiinpanot.md` is moved to the new location on first start, and the old `Yleinen` group becomes `General`.

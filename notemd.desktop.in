@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=notemd
-Comment=Pikamuistiinpanot
+Comment=Quick notes
 Exec=@DIR@/notemd.py
 Icon=@DIR@/notemd.svg
 Terminal=false
