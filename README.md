@@ -40,9 +40,15 @@ The Windows version (`notemd_win.pyw`) uses Tk, which ships with the standard Py
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\install.ps1
    ```
-   This creates a Start Menu shortcut `notemd` with the global hotkey **Ctrl+Alt+N** (change it with `-Hotkey "CTRL+ALT+M"`, or later in the shortcut's properties).
 
-You can also just double-click `notemd_win.pyw`. Features, keys and the notes file format are the same as on Linux.
+This creates a Start Menu shortcut and a Startup shortcut, and starts notemd in the background. Press **Win+Space** to open it.
+
+- The app stays running in the background; **Esc** (or the window's close button) only hides the window, **Ctrl+Q** quits the app completely.
+- Win+Space is normally Windows' input-language switch. notemd takes it over with a low-level keyboard hook while it is running (quit the app to get the language switch back). Some antivirus tools are suspicious of keyboard hooks.
+- Another hotkey: `.\install.ps1 -Hotkey "ctrl+alt+n"` (modifiers `win`, `ctrl`, `alt`, `shift` plus a letter, digit, `space` or `F1`–`F24`). Add `-NoAutostart` to skip the Startup shortcut.
+- Starting the app again (Start menu, or double-clicking `notemd_win.pyw`) just brings up the running instance.
+
+Features, keys and the notes file format are the same as on Linux.
 
 ## Storage
 Notes are stored in `~/Documents/notemd/notes.md` (on Windows: `Documents\notemd\notes.md` in your user folder):

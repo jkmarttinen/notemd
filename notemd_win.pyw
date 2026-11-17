@@ -1,10 +1,16 @@
 """notemd for Windows – quick notes with a single hotkey (Tk, standard library only).
 
-Enter = newline, double Enter (quickly) or Ctrl+Enter = save, Esc = close.
-Notes are stored in ~/Documents/notemd/notes.md (shared format with the Linux version).
+Enter = newline, double Enter (quickly) or Ctrl+Enter = save, Esc = hide the window.
+The app stays running in the background; the global hotkey (default Win+Space) shows the
+window again. Ctrl+Q quits it. Notes are stored in ~/Documents/notemd/notes.md.
+
+Usage:  notemd_win.pyw [--hidden] [--hotkey win+space]
 """
 import os
+import queue
+import socket
 import sys
+import threading
 import time
 import tkinter as tk
 
@@ -23,6 +29,134 @@ FONT_TEXT = ("Consolas", 12)
 DOUBLE_ENTER_SECS = 0.4  # two Enters this quickly = save
 ALL = object()           # category filter: all
 DRAG_THRESHOLD = 6       # pixels before a press turns into a drag
+
+
+DEFAULT_HOTKEY = "win+space"
+PORT = 47613             # local port used to detect an already running instance
+
+
+# ------------------------------------------------- global hotkey + single instance
+def parse_hotkey(text):
+    """'win+space' -> ({'win'}, 0x20). Modifiers: win, ctrl, alt, shift."""
+    names = {"space": 0x20, "enter": 0x0D, "tab": 0x09, "esc": 0x1B}
+    parts = [p for p in text.lower().replace(" ", "").split("+") if p]
+    mods = {p for p in parts if p in ("win", "ctrl", "alt", "shift")}
+    keys = [p for p in parts if p not in mods]
+    if len(keys) != 1:
+        raise ValueError(f"bad hotkey: {text!r}")
+    k = keys[0]
+    if k in names:
+        vk = names[k]
+    elif len(k) == 1 and k.isalnum():
+        vk = ord(k.upper())
+    elif k[0] == "f" and k[1:].isdigit() and 1 <= int(k[1:]) <= 24:
+        vk = 0x70 + int(k[1:]) - 1
+    else:
+        raise ValueError(f"bad hotkey: {text!r}")
+    return mods, vk
+
+
+class HotkeyHook(threading.Thread):
+    """Global hotkey through a low-level keyboard hook (the only way to take over Win+Space,
+    which Windows reserves for switching the input language). Windows only."""
+
+    def __init__(self, hotkey, callback):
+        super().__init__(daemon=True)
+        self.mods, self.vk = parse_hotkey(hotkey)
+        self.callback = callback
+        self.ok = threading.Event()
+        self.failed = False
+        self.swallowed = False
+
+    def run(self):
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+        except Exception:
+            self.failed = True
+            self.ok.set()
+            return
+
+        class KBD(ctypes.Structure):
+            _fields_ = [("vkCode", wintypes.DWORD), ("scanCode", wintypes.DWORD),
+                        ("flags", wintypes.DWORD), ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.c_size_t)]
+
+        HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
+        user32.SetWindowsHookExW.argtypes = [ctypes.c_int, HOOKPROC, wintypes.HINSTANCE, wintypes.DWORD]
+        user32.SetWindowsHookExW.restype = ctypes.c_void_p
+        user32.CallNextHookEx.argtypes = [ctypes.c_void_p, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM]
+        user32.CallNextHookEx.restype = ctypes.c_ssize_t
+        kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+        kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+        mod_keys = {"win": (0x5B, 0x5C), "ctrl": (0x11,), "alt": (0x12,), "shift": (0x10,)}
+
+        def down(vk):
+            return bool(user32.GetAsyncKeyState(vk) & 0x8000)
+
+        def mods_match():
+            return all(any(down(v) for v in vks) == (m in self.mods) for m, vks in mod_keys.items())
+
+        def proc(n_code, w_param, l_param):
+            if n_code == 0:
+                info = ctypes.cast(l_param, ctypes.POINTER(KBD)).contents
+                if info.vkCode == self.vk and not info.flags & 0x10:  # 0x10 = injected
+                    if w_param in (0x100, 0x104):                      # key down
+                        if self.swallowed or mods_match():
+                            if not self.swallowed:
+                                self.swallowed = True
+                                self.callback()
+                                if "win" in self.mods:                 # keep the Start menu from opening
+                                    user32.keybd_event(0xE8, 0, 0, 0)
+                                    user32.keybd_event(0xE8, 0, 2, 0)
+                            return 1
+                    elif w_param in (0x101, 0x105) and self.swallowed:  # key up
+                        self.swallowed = False
+                        return 1
+            return user32.CallNextHookEx(None, n_code, w_param, l_param)
+
+        self._proc = HOOKPROC(proc)  # keep a reference so it is not garbage collected
+        hook = user32.SetWindowsHookExW(13, self._proc, kernel32.GetModuleHandleW(None), 0)
+        self.failed = not hook
+        self.ok.set()
+        if self.failed:
+            return
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+
+def signal_running(message):
+    """Tell an already running instance something; True if there is one."""
+    try:
+        with socket.create_connection(("127.0.0.1", PORT), timeout=0.5) as s:
+            s.sendall(message)
+        return True
+    except OSError:
+        return False
+
+
+def listen_for_signals(events):
+    """Listens on a local port so a second launch can ask the running instance to show itself."""
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", PORT))
+    srv.listen(4)
+
+    def loop():
+        while True:
+            try:
+                conn, _ = srv.accept()
+                with conn:
+                    if conn.recv(16) == b"show":
+                        events.put("show")
+            except OSError:
+                return
+
+    threading.Thread(target=loop, daemon=True).start()
+    return srv
 
 
 # ------------------------------------------------------------------ widgets
@@ -515,8 +649,9 @@ class AllNotes(tk.Toplevel):
 
 # --------------------------------------------------------------- main window
 class App:
-    def __init__(self):
+    def __init__(self, hotkey=DEFAULT_HOTKEY, hidden=False):
         self.root = tk.Tk()
+        self.events = queue.SimpleQueue()   # "show" requests from the hotkey / a second launch
         self.root.title("notemd")
         self.root.configure(bg=BG)
         self.set_icon(self.root)
@@ -526,7 +661,7 @@ class App:
         self.warned = False
         self.last_enter = 0.0
         self.hint_text = ("Enter: newline · Enter Enter / Ctrl+Enter: save · "
-                          "Esc: close · Ctrl+1…9: category")
+                          "Esc: hide · Ctrl+1…9: category · Ctrl+Q: quit")
 
         outer = tk.Frame(self.root, bg=BG)
         outer.pack(fill="both", expand=True, padx=16, pady=16)
@@ -562,7 +697,37 @@ class App:
         self.root.bind("<Escape>", self.on_escape)
         for i in range(1, 10):
             self.root.bind(f"<Control-Key-{i}>", lambda e, i=i: self.quick_select(i))
+        self.root.bind("<Control-q>", lambda e: self.quit_app())
+        self.root.protocol("WM_DELETE_WINDOW", self.hide)
         self.refresh()
+
+        self.hook = None
+        if os.name == "nt":
+            self.hook = HotkeyHook(hotkey, lambda: self.events.put("show"))
+            self.hook.start()
+            self.hook.ok.wait(2)
+            if self.hook.failed:
+                self.hint_text = "Could not register the hotkey – start the app from the Start menu instead."
+                self.hint.configure(text=self.hint_text, fg=ORANGE)
+        self.root.after(50, self.poll)
+        if hidden:
+            self.root.withdraw()
+        else:
+            self.show()
+
+    def poll(self):
+        """Runs in the Tk thread: handles show requests queued by other threads."""
+        try:
+            while True:
+                if self.events.get_nowait() == "show":
+                    self.show()
+        except queue.Empty:
+            pass
+        self.root.after(50, self.poll)
+
+    def show(self):
+        self.refresh()
+        self.root.deiconify()
         self.root.update_idletasks()
         w, h = self.root.winfo_reqwidth(), self.root.winfo_reqheight()
         x = (self.root.winfo_screenwidth() - w) // 2
@@ -572,6 +737,18 @@ class App:
         self.root.lift()
         self.root.focus_force()
         self.text.focus_set()
+
+    def hide(self):
+        if self.all:
+            self.all.destroy()
+        self.text.delete("1.0", "end")
+        self.warned = False
+        self.hint.configure(text=self.hint_text, fg=DIM)
+        self.root.withdraw()
+
+    def quit_app(self):
+        self.root.destroy()
+        return "break"
 
     def set_icon(self, window):
         try:
@@ -683,7 +860,7 @@ class App:
             self.warned = True
             self.hint.configure(text="Unsaved text! Ctrl+Enter saves, Esc again discards and closes", fg=ORANGE)
             return "break"
-        self.root.destroy()
+        self.hide()
         return "break"
 
     def run(self):
@@ -696,7 +873,19 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
-    App().run()
+    argv = sys.argv[1:]
+    hidden = "--hidden" in argv
+    hotkey = argv[argv.index("--hotkey") + 1] if "--hotkey" in argv and argv.index("--hotkey") + 1 < len(argv) \
+        else DEFAULT_HOTKEY
+    # one instance only: a second launch just asks the running one to show itself
+    if signal_running(b"ping" if hidden else b"show"):
+        return
+    app = App(hotkey, hidden)
+    try:
+        app.srv = listen_for_signals(app.events)
+    except OSError:
+        pass
+    app.run()
 
 
 if __name__ == "__main__":
