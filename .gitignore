@@ -3,5 +3,4 @@ __pycache__/
 *.tmp
 # notes are stored outside the repo (~/Documents/notemd), but just in case:
 notes.md
-muistiinpanot.md
 *.md.bak
