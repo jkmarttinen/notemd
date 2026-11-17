@@ -46,4 +46,4 @@ note text
 ```
 The file is plain Markdown. A pinned note has 📌 after its heading, and empty categories are kept as headings.
 
-If you used an earlier (Finnish) version, `~/Documents/InstaNote/muistiinpanot.md` is moved to the new location on first start, and the old `Yleinen` group becomes `General`.
+
