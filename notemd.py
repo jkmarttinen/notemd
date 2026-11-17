@@ -12,10 +12,11 @@ File structure:
     ## Tue 17.11.2026 18:02:10
     text
 """
+import calendar
 import os
 import re
 import tempfile
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import gi
 
@@ -61,14 +62,21 @@ button.pinbtn { background: transparent; background-image: none; border: none; b
 button.pinbtn:hover { background: transparent; }
 .dropzone { border: 1px dashed transparent; padding: 4px; }
 .dropzone.dropover { border-color: #d2691e; background-color: #1a1612; }
-calendar { background-color: #181818; color: #bdbdbd; border: 1px solid #333333;
-    border-radius: 0; padding: 4px; }
-calendar:selected { background-color: #d2691e; color: #121212; }
-calendar:indeterminate { color: #4a4a4a; }
-calendar.highlight { color: #d2691e; }
-calendar.header { color: #e6e6e6; background-color: transparent; border: none; }
-calendar.button { background-image: none; background-color: transparent; color: #d2691e;
-    border: none; box-shadow: none; }
+.minical { background-color: #181818; border: 1px solid #333333; padding: 6px; }
+.minical .title { color: #e6e6e6; font-weight: bold; }
+.minical .dayname { color: #d2691e; font-size: 8.5pt; padding-bottom: 2px; }
+.minical .day { padding: 2px 0 1px 0; }
+.minical .day label { color: #bdbdbd; }
+.minical .day.other label { color: #4a4a4a; }
+.minical .day.today label.num { color: #d2691e; font-weight: bold; }
+.minical .day.selected { background-color: #d2691e; }
+.minical .day.selected label.num { color: #121212; font-weight: bold; }
+.minical .day label.dot { color: #d2691e; font-size: 6pt; }
+.minical .day label.dot.off { color: transparent; }
+.minical .day.selected label.dot { color: #121212; }
+button.calnav { background-image: none; background-color: transparent; color: #d2691e; border: none;
+    box-shadow: none; padding: 0 6px; min-height: 0; min-width: 0; }
+button.calnav:hover { background-color: #222222; }
 button.side.small { padding: 0 8px; font-size: 8.5pt; }
 button.side.danger { color: #121212; background-color: #d8453b; border-color: #d8453b; }
 combobox button { background-image: none; background-color: #181818; color: #bdbdbd;
@@ -520,6 +528,109 @@ class AllNotesWindow(Gtk.Window):
         GLib.idle_add(adj.set_value, pos)
 
 
+class MiniCalendar(Gtk.Box):
+    """Small month calendar: a dot under each day that has notes, double-click a day to open it."""
+
+    def __init__(self, on_activate):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.get_style_context().add_class("minical")
+        self.on_activate = on_activate
+        today = date.today()
+        self.year, self.month, self.selected = today.year, today.month, today
+        self.marked = set()
+        self.cells = {}
+
+        header = Gtk.Box(spacing=0)
+        for text, delta in (("«", -12), ("‹", -1)):
+            header.pack_start(self.nav_button(text, delta), False, False, 0)
+        self.title = Gtk.Label()
+        self.title.get_style_context().add_class("title")
+        title_box = Gtk.EventBox()           # click the title to jump back to today
+        title_box.add(self.title)
+        title_box.connect("button-press-event", lambda *_: self.go_today())
+        header.pack_start(title_box, True, True, 0)
+        for text, delta in (("›", 1), ("»", 12)):
+            header.pack_start(self.nav_button(text, delta), False, False, 0)
+        self.pack_start(header, False, False, 0)
+
+        self.grid = Gtk.Grid()
+        self.grid.set_column_homogeneous(True)
+        self.pack_start(self.grid, False, False, 0)
+        self.render()
+
+    def nav_button(self, text, delta):
+        b = Gtk.Button(label=text)
+        b.get_style_context().add_class("calnav")
+        b.set_relief(Gtk.ReliefStyle.NONE)
+        b.set_can_focus(False)
+        b.connect("clicked", lambda *_: self.shift_months(delta))
+        return b
+
+    def shift_months(self, delta):
+        index = self.year * 12 + (self.month - 1) + delta
+        self.year, self.month = index // 12, index % 12 + 1
+        self.render()
+
+    def go_today(self):
+        today = date.today()
+        self.year, self.month, self.selected = today.year, today.month, today
+        self.render()
+
+    def set_marked(self, days):
+        """days: set of ISO dates ('2026-11-17') that have notes."""
+        self.marked = set(days)
+        self.render()
+
+    def render(self):
+        clear(self.grid)
+        self.cells = {}
+        self.title.set_text(f"{calendar.month_name[self.month].lower()} {self.year}")
+        for col in range(7):
+            lbl = Gtk.Label(label=calendar.day_abbr[col][:2].lower())
+            lbl.get_style_context().add_class("dayname")
+            self.grid.attach(lbl, col, 0, 1, 1)
+        first = date(self.year, self.month, 1)
+        start = first - timedelta(days=first.weekday())        # week starts on Monday
+        today = date.today()
+        for i in range(42):                                    # always six rows: the height stays put
+            d = start + timedelta(days=i)
+            cell = Gtk.EventBox()
+            cell.set_visible_window(True)
+            ctx = cell.get_style_context()
+            ctx.add_class("day")
+            if d.month != self.month:
+                ctx.add_class("other")
+            if d == today:
+                ctx.add_class("today")
+            if d == self.selected:
+                ctx.add_class("selected")
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            num = Gtk.Label(label=str(d.day))
+            num.get_style_context().add_class("num")
+            dot = Gtk.Label(label="●")
+            dot.get_style_context().add_class("dot")
+            if d.isoformat() not in self.marked:
+                dot.get_style_context().add_class("off")      # keeps the row height the same
+            col.pack_start(num, False, False, 0)
+            col.pack_start(dot, False, False, 0)
+            cell.add(col)
+            cell.connect("button-press-event", self.on_press, d)
+            self.cells[d] = cell
+            self.grid.attach(cell, i % 7, i // 7 + 1, 1, 1)
+        self.grid.show_all()
+
+    def on_press(self, widget, event, d):
+        if event.type == Gdk.EventType.BUTTON_PRESS:
+            old = self.cells.get(self.selected)
+            if old:
+                old.get_style_context().remove_class("selected")
+            self.selected = d
+            widget.get_style_context().add_class("selected")
+        elif event.type == Gdk.EventType._2BUTTON_PRESS:
+            self.on_activate(d)
+        return True
+
+
 class NoteMD(Gtk.Window):
     def __init__(self):
         super().__init__(title="notemd")
@@ -551,10 +662,7 @@ class NoteMD(Gtk.Window):
 
         # Far left: small calendar (days with notes are marked, double-click a day to see its notes)
         cal_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        self.calendar = Gtk.Calendar()
-        self.calendar.set_can_focus(False)
-        self.calendar.connect("month-changed", lambda *_: self.mark_calendar())
-        self.calendar.connect("day-selected-double-click", self.on_calendar_day)
+        self.calendar = MiniCalendar(self.on_calendar_day)
         cal_col.pack_start(self.calendar, False, False, 0)
         cal_hint = Gtk.Label(label="double-click a day\nto show its notes")
         cal_hint.get_style_context().add_class("hint")
@@ -677,20 +785,12 @@ class NoteMD(Gtk.Window):
 
     # -- calendar
     def mark_calendar(self):
-        """Mark the days of the shown month that have notes."""
-        year, month, _ = self.calendar.get_date()   # month is 0-based
-        self.calendar.clear_marks()
-        prefix = f"{year}-{month + 1:02d}-"
-        for day in self.note_days:
-            if day.startswith(prefix):
-                self.calendar.mark_day(int(day[8:10]))
+        self.calendar.set_marked(self.note_days)
 
-    def on_calendar_day(self, calendar):
-        year, month, day = calendar.get_date()
+    def on_calendar_day(self, d):
         self.show_all_notes()
         search = self.all_window.search
-        search.set_text(f"{day}.{month + 1}.{year}")
-        search.select_region(0, 0)   # no highlighted text
+        search.set_text(f"{d.day}.{d.month}.{d.year}")
         search.set_position(-1)
 
     def toggle_pin(self, note):
