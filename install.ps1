@@ -14,7 +14,7 @@ if (-not $runner) {
     Write-Error "Python 3 was not found. Install it from https://www.python.org/downloads/ (tick 'Add python.exe to PATH')."
     exit 1
 }
-$script = '"' + (Join-Path $dir "notemd_win.pyw") + '"'
+$script = '"' + (Join-Path $dir "notemd_tk.pyw") + '"'
 $shell = New-Object -ComObject WScript.Shell
 
 function New-Shortcut($path, $arguments) {

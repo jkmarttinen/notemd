@@ -1,6 +1,6 @@
 # notemd
 
-A quick-note app for Linux (Python + GTK3) and Windows (Python + Tk). Open a small dark window with a hotkey, type a note, and it is saved with a timestamp to a Markdown file, organised by category.
+A quick-note app for Linux (Python + GTK3), Windows and macOS (Python + Tk). Open a small dark window with a hotkey, type a note, and it is saved with a timestamp to a Markdown file, organised by category.
 
 ## Features
 - Small console-style window showing your 5 latest notes
@@ -32,7 +32,7 @@ cd notemd
 This adds a launcher and icon to your application menu. Set the hotkey in your desktop environment's settings (KDE: System Settings → Shortcuts → Add Command) with the command `/path/to/notemd.py`. Global hotkeys cannot be registered by the app itself on Wayland.
 
 ## Windows
-The Windows version (`notemd_win.pyw`) uses Tk, which ships with the standard Python installer, so there is nothing extra to install.
+The Windows version (`notemd_tk.pyw`) uses Tk, which ships with the standard Python installer, so there is nothing extra to install.
 
 1. Install Python 3 from <https://www.python.org/downloads/> (tick "Add python.exe to PATH").
 2. Download or clone this repository.
@@ -46,9 +46,23 @@ This creates a Start Menu shortcut and a Startup shortcut, and starts notemd in 
 - The app stays running in the background; **Esc** (or the window's close button) only hides the window, **Ctrl+Q** quits the app completely.
 - Win+Space is normally Windows' input-language switch. notemd takes it over with a low-level keyboard hook while it is running (quit the app to get the language switch back). Some antivirus tools are suspicious of keyboard hooks.
 - Another hotkey: `.\install.ps1 -Hotkey "ctrl+alt+n"` (modifiers `win`, `ctrl`, `alt`, `shift` plus a letter, digit, `space` or `F1`–`F24`). Add `-NoAutostart` to skip the Startup shortcut.
-- Starting the app again (Start menu, or double-clicking `notemd_win.pyw`) just brings up the running instance.
+- Starting the app again (Start menu, or double-clicking `notemd_tk.pyw`) just brings up the running instance.
 
 Features, keys and the notes file format are the same as on Linux.
+
+## macOS
+The macOS version uses the same Tk front end (`notemd_tk.pyw`). It needs Python 3 with a current Tk: install Python from <https://www.python.org/downloads/macos/> (Apple's built-in `python3` ships an outdated Tk and is not used).
+
+```sh
+./install_mac.sh
+```
+This creates `~/Applications/notemd.app` (start it from Spotlight or Launchpad). macOS has no per-app hotkey setting and apps cannot register a global hotkey without extra permissions, so create the hotkey yourself once:
+
+1. Open **Automator** → New Document → **Quick Action**.
+2. Set "Workflow receives" to **no input**, add the action **Run Shell Script** with `open -a notemd`, and save it as `notemd`.
+3. **System Settings → Keyboard → Keyboard Shortcuts → Services → General → notemd** → add a shortcut (for example Ctrl+Option+N; Cmd+Space is Spotlight).
+
+On macOS the shortcuts use **Cmd**: Cmd+Enter saves and Cmd+1…9 picks a category. **Esc** closes the app. On first use macOS may ask whether Python may control "System Events"; that is only used to bring the window to the front. I could not test the macOS version on a real Mac, so please report problems.
 
 ## Storage
 Notes are stored in `~/Documents/notemd/notes.md` (on Windows: `Documents\notemd\notes.md` in your user folder):
@@ -70,4 +84,5 @@ The file is plain Markdown. A pinned note has 📌 after its heading, and empty 
 |---|---|
 | `notemd_core.py` | note storage and the Markdown format (shared) |
 | `notemd.py` | Linux front end (GTK3) |
-| `notemd_win.pyw` | Windows front end (Tk) |
+| `notemd_tk.pyw` | Windows and macOS front end (Tk) |
+| `install.sh`, `install.ps1`, `install_mac.sh` | installers for Linux, Windows, macOS |

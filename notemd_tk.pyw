@@ -1,14 +1,19 @@
-"""notemd for Windows – quick notes with a single hotkey (Tk, standard library only).
+"""notemd for Windows and macOS – quick notes with a single hotkey (Tk, standard library only).
 
-Enter = newline, double Enter (quickly) or Ctrl+Enter = save, Esc = hide the window.
-The app stays running in the background; the global hotkey (default Win+Space) shows the
-window again. Ctrl+Q quits it. Notes are stored in ~/Documents/notemd/notes.md.
+Enter = newline, double Enter (quickly) or Ctrl+Enter (Cmd+Enter on macOS) = save.
 
-Usage:  notemd_win.pyw [--hidden] [--hotkey win+space]
+Windows: the app stays running in the background; the global hotkey (default Win+Space)
+shows the window again. Esc hides the window, Ctrl+Q quits.
+macOS:   start it with a keyboard shortcut set in System Settings (see README); Esc closes it.
+
+Notes are stored in ~/Documents/notemd/notes.md.
+
+Usage:  notemd_tk.pyw [--hidden] [--hotkey win+space]      (--hidden / --hotkey: Windows only)
 """
 import os
 import queue
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -21,10 +26,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BG, PANEL, PINNED_BG = "#121212", "#181818", "#1f1a16"
 FG, MUTED, DIM = "#e6e6e6", "#bdbdbd", "#5c5c5c"
 ORANGE, BORDER, CARD_BORDER, RED = "#d2691e", "#333333", "#262626", "#d8453b"
-FONT = ("Consolas", 10)
-FONT_SMALL = ("Consolas", 9)
-FONT_BOLD = ("Consolas", 10, "bold")
-FONT_TEXT = ("Consolas", 12)
+IS_MAC = sys.platform == "darwin"
+IS_WIN = sys.platform == "win32"
+RESIDENT = IS_WIN            # Windows keeps running in the background and listens for the hotkey
+MONO = "Menlo" if IS_MAC else "Consolas"
+FONT = (MONO, 11 if IS_MAC else 10)
+FONT_SMALL = (MONO, 10 if IS_MAC else 9)
+FONT_BOLD = (MONO, 11 if IS_MAC else 10, "bold")
+FONT_TEXT = (MONO, 13 if IS_MAC else 12)
 
 DOUBLE_ENTER_SECS = 0.4  # two Enters this quickly = save
 ALL = object()           # category filter: all
@@ -161,10 +170,11 @@ def listen_for_signals(events):
 
 # ------------------------------------------------------------------ widgets
 def mkbtn(parent, text, command, kind="normal", on=False, bg=None):
-    """Flat console-style button. kind: normal | primary | danger | toggle."""
-    b = tk.Button(parent, text=text, command=command, relief="flat", bd=0, cursor="hand2",
-                  takefocus=0, font=FONT_SMALL, padx=8, pady=1, highlightthickness=1)
-    b.kind, b.on = kind, on
+    """Flat console-style button. kind: normal | primary | danger | toggle.
+
+    Built from a Label: native buttons (macOS) ignore colours, labels look the same everywhere."""
+    b = tk.Label(parent, text=text, cursor="hand2", padx=8, pady=2, bd=0, highlightthickness=1)
+    b.kind, b.on, b._is_button = kind, on, True
     paint(b)
 
     def enter(_):
@@ -176,24 +186,25 @@ def mkbtn(parent, text, command, kind="normal", on=False, bg=None):
     def leave(_):
         paint(b)
 
+    def release(e):
+        if 0 <= e.x < b.winfo_width() and 0 <= e.y < b.winfo_height():  # released over the button
+            command()
+
     b.bind("<Enter>", enter)
     b.bind("<Leave>", leave)
+    b.bind("<ButtonRelease-1>", release)
     return b
 
 
 def paint(b):
     if b.kind == "danger":
-        b.configure(bg=RED, fg=BG, activebackground=RED, activeforeground=BG,
-                    highlightbackground=RED, highlightcolor=RED)
+        b.configure(bg=RED, fg=BG, highlightbackground=RED, font=FONT_SMALL)
     elif b.kind == "primary":
-        b.configure(bg=PANEL, fg=ORANGE, activebackground=ORANGE, activeforeground=BG,
-                    highlightbackground=ORANGE, highlightcolor=ORANGE)
+        b.configure(bg=PANEL, fg=ORANGE, highlightbackground=ORANGE, font=FONT_SMALL)
     elif b.kind == "toggle" and b.on:
-        b.configure(bg=ORANGE, fg=BG, activebackground=ORANGE, activeforeground=BG,
-                    highlightbackground=ORANGE, highlightcolor=ORANGE, font=FONT_BOLD)
+        b.configure(bg=ORANGE, fg=BG, highlightbackground=ORANGE, font=FONT_BOLD)
     else:
-        b.configure(bg=PANEL, fg=MUTED, activebackground="#222222", activeforeground=FG,
-                    highlightbackground=BORDER, highlightcolor=ORANGE, font=FONT_SMALL)
+        b.configure(bg=PANEL, fg=MUTED, highlightbackground=BORDER, font=FONT_SMALL)
 
 
 def mklabel(parent, text, fg=MUTED, font=FONT, bg=BG, **kw):
@@ -335,7 +346,7 @@ class ScrollFrame(tk.Frame):
         self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self.win, width=e.width))
 
     def scroll(self, event):
-        self.canvas.yview_scroll(int(-event.delta / 120), "units")
+        self.canvas.yview_scroll(-event.delta if IS_MAC else int(-event.delta / 120), "units")
 
 
 # ----------------------------------------------------------- all-notes window
@@ -559,6 +570,8 @@ class AllNotes(tk.Toplevel):
         self.editor.insert("1.0", n["text"])
         self.editor.pack(fill="x", padx=8)
         self.editor.bind("<Control-Return>", lambda e: self.save_edit())
+        if IS_MAC:
+            self.editor.bind("<Command-Return>", lambda e: self.save_edit())
         self.editor.bind("<Escape>", lambda e: (self.cancel_edit(), "break")[1])
         row = tk.Frame(outer, bg=PANEL)
         row.pack(fill="x", padx=8, pady=6)
@@ -571,7 +584,7 @@ class AllNotes(tk.Toplevel):
 
     # -- drag & drop (manual: Tk has no built-in drag and drop)
     def bind_drag(self, widget, note):
-        if isinstance(widget, (tk.Button, tk.Canvas)):
+        if getattr(widget, "_is_button", False) or isinstance(widget, tk.Canvas):
             return
         widget.bind("<ButtonPress-1>", lambda e, n=note: self.drag_press(e, n), add="+")
         widget.bind("<B1-Motion>", self.drag_motion, add="+")
@@ -660,8 +673,13 @@ class App:
         self.all = None
         self.warned = False
         self.last_enter = 0.0
-        self.hint_text = ("Enter: newline · Enter Enter / Ctrl+Enter: save · "
-                          "Esc: hide · Ctrl+1…9: category · Ctrl+Q: quit")
+        if IS_MAC:
+            self.hint_text = "Enter: newline · Enter Enter / Cmd+Enter: save · Esc: close · Cmd+1…9: category"
+        elif RESIDENT:
+            self.hint_text = ("Enter: newline · Enter Enter / Ctrl+Enter: save · "
+                              "Esc: hide · Ctrl+1…9: category · Ctrl+Q: quit")
+        else:
+            self.hint_text = "Enter: newline · Enter Enter / Ctrl+Enter: save · Esc: close · Ctrl+1…9: category"
 
         outer = tk.Frame(self.root, bg=BG)
         outer.pack(fill="both", expand=True, padx=16, pady=16)
@@ -672,6 +690,8 @@ class App:
         self.text.pack(fill="both", expand=True)
         self.text.bind("<Return>", self.on_return)
         self.text.bind("<Control-Return>", self.on_ctrl_return)
+        if IS_MAC:
+            self.text.bind("<Command-Return>", self.on_ctrl_return)
         self.text.bind("<Key>", self.on_any_key, add="+")
 
         self.flow = Flow(left)
@@ -697,12 +717,15 @@ class App:
         self.root.bind("<Escape>", self.on_escape)
         for i in range(1, 10):
             self.root.bind(f"<Control-Key-{i}>", lambda e, i=i: self.quick_select(i))
-        self.root.bind("<Control-q>", lambda e: self.quit_app())
+            if IS_MAC:
+                self.root.bind(f"<Command-Key-{i}>", lambda e, i=i: self.quick_select(i))
+        if RESIDENT:   # on macOS Cmd+Q already quits the app
+            self.root.bind("<Control-q>", lambda e: self.quit_app())
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         self.refresh()
 
         self.hook = None
-        if os.name == "nt":
+        if IS_WIN:
             self.hook = HotkeyHook(hotkey, lambda: self.events.put("show"))
             self.hook.start()
             self.hook.ok.wait(2)
@@ -736,9 +759,18 @@ class App:
         self.root.attributes("-topmost", True)
         self.root.lift()
         self.root.focus_force()
+        if IS_MAC:  # a script-launched Tk app does not come to the front on its own
+            try:
+                subprocess.Popen(["osascript", "-e", 'tell application "System Events" to set frontmost of '
+                                  f"the first process whose unix id is {os.getpid()} to true"])
+            except OSError:
+                pass
         self.text.focus_set()
 
     def hide(self):
+        if not RESIDENT:      # macOS / other: closing the window quits the app
+            self.quit_app()
+            return
         if self.all:
             self.all.destroy()
         self.text.delete("1.0", "end")
@@ -858,7 +890,7 @@ class App:
         # unsaved text: the first Esc warns, the second closes
         if self.draft() and not self.warned:
             self.warned = True
-            self.hint.configure(text="Unsaved text! Ctrl+Enter saves, Esc again discards and closes", fg=ORANGE)
+            self.hint.configure(text="Unsaved text! Save it, or press Esc again to discard and close", fg=ORANGE)
             return "break"
         self.hide()
         return "break"
