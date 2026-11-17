@@ -16,8 +16,6 @@ from datetime import datetime
 
 NOTES_DIR = os.path.expanduser("~/Documents/notemd")
 NOTES_FILE = os.path.join(NOTES_DIR, "notes.md")
-# Earlier (Finnish) versions stored notes here; moved to the new location on first start
-OLD_NOTES_FILE = os.path.expanduser("~/Documents/InstaNote/muistiinpanot.md")
 GENERAL = "General"
 LEGACY_GENERAL = "Yleinen"  # the group name used by the Finnish version
 CAT_HEADING = re.compile(r"^# (.+?)\s*$")
@@ -50,20 +48,12 @@ def unescape(line):
     return line[1:] if line.startswith("\\") and NEEDS_ESCAPE.match(line[1:]) else line
 
 
-def migrate_old_file():
-    """Moves the notes file of an earlier version to the new location (once)."""
-    if not os.path.exists(NOTES_FILE) and os.path.exists(OLD_NOTES_FILE):
-        os.makedirs(NOTES_DIR, exist_ok=True)
-        os.replace(OLD_NOTES_FILE, NOTES_FILE)
-
-
 def load_data():
     """Returns (categories, notes).
 
     categories: list of names in creation order (without 'General').
     notes: list of dicts {stamp, cat (None = general), text, order}.
     """
-    migrate_old_file()
     try:
         with open(NOTES_FILE, encoding="utf-8") as f:
             lines = f.read().splitlines()

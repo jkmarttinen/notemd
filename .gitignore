@@ -1,8 +1,6 @@
 __pycache__/
 *.pyc
 *.tmp
-# local launcher shim from an earlier version
-instanote.py
 # notes are stored outside the repo (~/Documents/notemd), but just in case:
 notes.md
 muistiinpanot.md
