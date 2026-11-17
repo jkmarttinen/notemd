@@ -10,17 +10,26 @@ Notes are stored in ~/Documents/notemd/notes.md.
 
 Usage:  notemd_tk.pyw [--hidden] [--hotkey win+space]      (--hidden / --hotkey: Windows only)
 """
+import calendar
+import locale
 import os
 import queue
+import re
 import socket
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
+from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from notemd_core import *  # noqa: E402,F401,F403  (storage functions and constants)
+
+try:  # month and weekday names in the system language
+    locale.setlocale(locale.LC_TIME, "")
+except locale.Error:
+    pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BG, PANEL, PINNED_BG = "#121212", "#181818", "#1f1a16"
@@ -486,7 +495,11 @@ class AllNotes(tk.Toplevel):
         cats, notes = load_data()
         all_notes = notes
         q = self.query.get().strip().lower()
-        if q:
+        day = re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", q)
+        if day:  # a plain date (from the calendar) matches that day exactly
+            iso = f"{day.group(3)}-{int(day.group(2)):02d}-{int(day.group(1)):02d}"
+            notes = [n for n in notes if n["stamp"].startswith(iso)]
+        elif q:
             notes = [n for n in notes
                      if q in n["text"].lower() or q in (n["cat"] or GENERAL).lower()
                      or q in fmt_stamp(n["stamp"]).lower()]
@@ -660,6 +673,104 @@ class AllNotes(tk.Toplevel):
             self.after_idle(move)
 
 
+# ------------------------------------------------------------ mini calendar
+class MiniCalendar(tk.Frame):
+    """Small month calendar: a dot under each day that has notes, double-click a day to open it."""
+
+    def __init__(self, master, on_activate):
+        super().__init__(master, bg=PANEL, highlightthickness=1, highlightbackground=BORDER)
+        self.on_activate = on_activate
+        today = date.today()
+        self.year, self.month, self.selected = today.year, today.month, today
+        self.marked = set()
+        self.cells = {}
+
+        header = tk.Frame(self, bg=PANEL)
+        header.pack(fill="x", padx=6, pady=(6, 2))
+        for text, delta in (("\u00ab", -12), ("\u2039", -1)):
+            self.nav(header, text, delta).pack(side="left")
+        for text, delta in (("\u00bb", 12), ("\u203a", 1)):
+            self.nav(header, text, delta).pack(side="right")
+        self.title = mklabel(header, "", fg=FG, font=FONT_BOLD, bg=PANEL, cursor="hand2")
+        self.title.pack(side="left", expand=True)
+        self.title.bind("<ButtonRelease-1>", lambda e: self.go_today())  # back to today
+
+        self.grid_frame = tk.Frame(self, bg=PANEL)
+        self.grid_frame.pack(padx=6, pady=(0, 6))
+        for col in range(7):
+            self.grid_frame.columnconfigure(col, weight=1, uniform="day")
+        self.render()
+
+    def nav(self, parent, text, delta):
+        b = mklabel(parent, text, fg=ORANGE, font=FONT_BOLD, bg=PANEL, cursor="hand2", padx=5)
+        b.bind("<ButtonRelease-1>", lambda e: self.shift_months(delta))
+        return b
+
+    def shift_months(self, delta):
+        index = self.year * 12 + (self.month - 1) + delta
+        self.year, self.month = index // 12, index % 12 + 1
+        self.render()
+
+    def go_today(self):
+        today = date.today()
+        self.year, self.month, self.selected = today.year, today.month, today
+        self.render()
+
+    def set_marked(self, days):
+        """days: set of ISO dates ('2026-11-17') that have notes."""
+        self.marked = set(days)
+        self.render()
+
+    def style(self, d):
+        frame, num, dot = self.cells[d]
+        today = date.today()
+        sel = d == self.selected
+        bg = ORANGE if sel else PANEL
+        if sel:
+            fg = BG
+        elif d.month != self.month:
+            fg = "#4a4a4a"
+        elif d == today:
+            fg = ORANGE
+        else:
+            fg = MUTED
+        weight = FONT_BOLD if (sel or d == today) else FONT_SMALL
+        frame.configure(bg=bg)
+        num.configure(bg=bg, fg=fg, font=weight)
+        marked = d.isoformat() in self.marked
+        dot.configure(bg=bg, fg=(BG if sel else ORANGE) if marked else bg)  # unmarked: dot hidden
+
+    def render(self):
+        for w in self.grid_frame.winfo_children():
+            w.destroy()
+        self.cells = {}
+        self.title.configure(text=f"{calendar.month_name[self.month].lower()} {self.year}")
+        for col in range(7):
+            mklabel(self.grid_frame, calendar.day_abbr[col][:2].lower(), fg=ORANGE, font=FONT_SMALL,
+                    bg=PANEL).grid(row=0, column=col)
+        first = date(self.year, self.month, 1)
+        start = first - timedelta(days=first.weekday())          # week starts on Monday
+        for i in range(42):                                      # always six rows: the height stays put
+            d = start + timedelta(days=i)
+            frame = tk.Frame(self.grid_frame, bg=PANEL, cursor="hand2")
+            frame.grid(row=i // 7 + 1, column=i % 7, sticky="nsew")
+            num = mklabel(frame, str(d.day), bg=PANEL, width=3)
+            num.pack()
+            dot = mklabel(frame, "\u25cf", bg=PANEL, font=(MONO, 6))
+            dot.pack()
+            self.cells[d] = (frame, num, dot)
+            for w in (frame, num, dot):
+                w.bind("<Button-1>", lambda e, d=d: self.select(d))
+                w.bind("<Double-Button-1>", lambda e, d=d: self.on_activate(d))
+            self.style(d)
+
+    def select(self, d):
+        old, self.selected = self.selected, d
+        if old in self.cells:
+            self.style(old)
+        self.style(d)
+
+
 # --------------------------------------------------------------- main window
 class App:
     def __init__(self, hotkey=DEFAULT_HOTKEY, hidden=False):
@@ -683,6 +794,13 @@ class App:
 
         outer = tk.Frame(self.root, bg=BG)
         outer.pack(fill="both", expand=True, padx=16, pady=16)
+
+        cal_col = tk.Frame(outer, bg=BG)
+        cal_col.pack(side="left", fill="y", padx=(0, 16), anchor="n")
+        self.calendar = MiniCalendar(cal_col, self.on_calendar_day)
+        self.calendar.pack(anchor="n")
+        mklabel(cal_col, "double-click a day\nto show its notes", fg=DIM, font=FONT_SMALL,
+                justify="left").pack(anchor="w", pady=(6, 0))
 
         left = tk.Frame(outer, bg=BG)
         left.pack(side="left", fill="both", expand=True)
@@ -794,6 +912,7 @@ class App:
     def refresh(self):
         cats, notes = load_data()
         self.cats = cats
+        self.calendar.set_marked({n["stamp"][:10] for n in notes})
         if self.selected and self.selected not in cats:
             self.selected = None
         self.flow.clear()
@@ -854,6 +973,10 @@ class App:
             self.all.lift()
             return
         self.all = AllNotes(self)
+
+    def on_calendar_day(self, d):
+        self.show_all_notes()
+        self.all.query.set(f"{d.day}.{d.month}.{d.year}")
 
     # -- keys
     def draft(self):

@@ -6,7 +6,7 @@ A quick-note app for Linux (Python + GTK3), Windows and macOS (Python + Tk). Ope
 - Small console-style window showing your 5 latest notes
 - Categories (create with a button, quick-select with Ctrl+1…9)
 - Pinning (📌), editing, deleting, search, category filter buttons, and drag & drop between categories in the "all notes" window
-- Small calendar on the left (Linux version for now): a dot under days that have notes, double-click a day to list its notes
+- Small calendar on the left: a dot under days that have notes, double-click a day to list its notes
 - Timestamps with weekday: `Tue 17.11.2026 17:50:59`
 
 ## Keys
