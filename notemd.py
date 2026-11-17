@@ -61,6 +61,14 @@ button.pinbtn { background: transparent; background-image: none; border: none; b
 button.pinbtn:hover { background: transparent; }
 .dropzone { border: 1px dashed transparent; padding: 4px; }
 .dropzone.dropover { border-color: #d2691e; background-color: #1a1612; }
+calendar { background-color: #181818; color: #bdbdbd; border: 1px solid #333333;
+    border-radius: 0; padding: 4px; }
+calendar:selected { background-color: #d2691e; color: #121212; }
+calendar:indeterminate { color: #4a4a4a; }
+calendar.highlight { color: #d2691e; }
+calendar.header { color: #e6e6e6; background-color: transparent; border: none; }
+calendar.button { background-image: none; background-color: transparent; color: #d2691e;
+    border: none; box-shadow: none; }
 button.side.small { padding: 0 8px; font-size: 8.5pt; }
 button.side.danger { color: #121212; background-color: #d8453b; border-color: #d8453b; }
 combobox button { background-image: none; background-color: #181818; color: #bdbdbd;
@@ -462,7 +470,11 @@ class AllNotesWindow(Gtk.Window):
         cats, notes = load_data()
         all_notes = notes
         query = self.search.get_text().strip().lower()
-        if query:
+        date = re.fullmatch(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", query)
+        if date:  # a plain date (from the calendar) matches that day exactly
+            iso = f"{date.group(3)}-{int(date.group(2)):02d}-{int(date.group(1)):02d}"
+            notes = [n for n in notes if n["stamp"].startswith(iso)]
+        elif query:
             notes = [n for n in notes
                      if query in n["text"].lower() or query in (n["cat"] or GENERAL).lower()
                      or query in fmt_stamp(n["stamp"]).lower()]
@@ -511,7 +523,7 @@ class AllNotesWindow(Gtk.Window):
 class NoteMD(Gtk.Window):
     def __init__(self):
         super().__init__(title="notemd")
-        self.set_default_size(860, -1)  # height follows the content
+        self.set_default_size(1080, -1)  # height follows the content
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_keep_above(True)
         self.get_style_context().add_class("root")
@@ -519,12 +531,14 @@ class NoteMD(Gtk.Window):
         self.connect("key-press-event", self.on_window_key)
 
         self.selected = None      # selected category (None = general)
+        self.note_days = set()
         self.cat_buttons = {}
         self.warned = False
         self.last_enter = 0.0
         self.all_window = None
         self._syncing = False
 
+        Gtk.Settings.get_default().set_property("gtk-entry-select-on-focus", False)  # no auto-selected text
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_screen(
@@ -534,6 +548,19 @@ class NoteMD(Gtk.Window):
         box = Gtk.Box(spacing=16)
         box.set_border_width(16)
         self.add(box)
+
+        # Far left: small calendar (days with notes are marked, double-click a day to see its notes)
+        cal_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.calendar = Gtk.Calendar()
+        self.calendar.set_can_focus(False)
+        self.calendar.connect("month-changed", lambda *_: self.mark_calendar())
+        self.calendar.connect("day-selected-double-click", self.on_calendar_day)
+        cal_col.pack_start(self.calendar, False, False, 0)
+        cal_hint = Gtk.Label(label="double-click a day\nto show its notes")
+        cal_hint.get_style_context().add_class("hint")
+        cal_hint.set_xalign(0)
+        cal_col.pack_start(cal_hint, False, False, 0)
+        box.pack_start(cal_col, False, False, 0)
 
         # Left: writing area + categories
         left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -635,6 +662,8 @@ class NoteMD(Gtk.Window):
             self.flow.add(b)
         self.flow.show_all()
         self.cats = cats
+        self.note_days = {n["stamp"][:10] for n in notes}
+        self.mark_calendar()
         # latest notes
         clear(self.list_box)
         for n in latest(notes):
@@ -645,6 +674,24 @@ class NoteMD(Gtk.Window):
         GLib.idle_add(self.fit_height)
         if self.all_window:
             self.all_window.refresh()
+
+    # -- calendar
+    def mark_calendar(self):
+        """Mark the days of the shown month that have notes."""
+        year, month, _ = self.calendar.get_date()   # month is 0-based
+        self.calendar.clear_marks()
+        prefix = f"{year}-{month + 1:02d}-"
+        for day in self.note_days:
+            if day.startswith(prefix):
+                self.calendar.mark_day(int(day[8:10]))
+
+    def on_calendar_day(self, calendar):
+        year, month, day = calendar.get_date()
+        self.show_all_notes()
+        search = self.all_window.search
+        search.set_text(f"{day}.{month + 1}.{year}")
+        search.select_region(0, 0)   # no highlighted text
+        search.set_position(-1)
 
     def toggle_pin(self, note):
         toggle_pin(note)
